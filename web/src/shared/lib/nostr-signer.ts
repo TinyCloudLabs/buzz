@@ -4,18 +4,10 @@ import {
   getPublicKey,
 } from "nostr-tools/pure";
 
-export type UnsignedNostrEvent = {
-  kind: number;
-  created_at: number;
-  tags: string[][];
-  content: string;
-};
+import { verifySignedEvent } from "./signers/verify";
+import type { SignedNostrEvent, UnsignedNostrEvent } from "./signers/types";
 
-export type SignedNostrEvent = UnsignedNostrEvent & {
-  id: string;
-  pubkey: string;
-  sig: string;
-};
+export type { SignedNostrEvent, UnsignedNostrEvent } from "./signers/types";
 
 type Nip07Provider = {
   getPublicKey(): Promise<string>;
@@ -48,16 +40,17 @@ export function hasNip07Provider(): boolean {
   return typeof window !== "undefined" && window.nostr != null;
 }
 
-function sameUnsignedEvent(
-  expected: UnsignedNostrEvent,
-  actual: SignedNostrEvent,
-): boolean {
-  return (
-    actual.kind === expected.kind &&
-    actual.created_at === expected.created_at &&
-    actual.content === expected.content &&
-    JSON.stringify(actual.tags) === JSON.stringify(expected.tags)
-  );
+/**
+ * The device identity's pubkey without signing anything: the NIP-07
+ * extension's pubkey when one is installed, otherwise the page-lifetime
+ * ephemeral key's pubkey (created on first use).
+ */
+export async function getDevicePublicKey(): Promise<string> {
+  const provider = typeof window === "undefined" ? undefined : window.nostr;
+  if (provider) {
+    return provider.getPublicKey();
+  }
+  return getPublicKey(getEphemeralSecretKey());
 }
 
 /**
@@ -82,15 +75,11 @@ export async function signNostrEvent(
   if (provider) {
     const expectedPubkey = await provider.getPublicKey();
     const signed = await provider.signEvent(unsigned);
-    if (
-      signed.pubkey !== expectedPubkey ||
-      !sameUnsignedEvent(unsigned, signed) ||
-      typeof signed.id !== "string" ||
-      typeof signed.sig !== "string"
-    ) {
-      throw new Error("The NIP-07 extension returned an invalid signed event.");
-    }
-    return signed;
+    // A NIP-07 extension is third-party code running with page access; treat
+    // its response exactly like any other untrusted signer and independently
+    // recompute the id and verify the Schnorr signature rather than trusting
+    // whatever fields it hands back.
+    return verifySignedEvent(unsigned, signed, expectedPubkey);
   }
 
   if (options?.requireNip07) {
@@ -99,8 +88,5 @@ export async function signNostrEvent(
 
   const secretKey = getEphemeralSecretKey();
   const signed = finalizeEvent(unsigned, secretKey);
-  if (signed.pubkey !== getPublicKey(secretKey)) {
-    throw new Error("Failed to create the ephemeral browser identity.");
-  }
-  return signed;
+  return verifySignedEvent(unsigned, signed, getPublicKey(secretKey));
 }

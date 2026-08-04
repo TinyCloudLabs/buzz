@@ -219,11 +219,17 @@ fn is_invite_landing_path(path: &str) -> bool {
 }
 
 fn should_serve_spa(path: &str, serve_git_web_gui: bool) -> bool {
-    is_invite_landing_path(path) || (serve_git_web_gui && is_git_web_gui_path(path))
+    is_invite_landing_path(path)
+        || is_openkey_harness_spa_path(path)
+        || (serve_git_web_gui && is_git_web_gui_path(path))
 }
 
 fn is_git_web_gui_path(path: &str) -> bool {
     path == "/" || path == "/repos" || path.starts_with("/repos/")
+}
+
+fn is_openkey_harness_spa_path(path: &str) -> bool {
+    path == "/keys" || path.starts_with("/channels/")
 }
 
 async fn read_spa_index(index: &std::path::Path) -> axum::response::Response {
