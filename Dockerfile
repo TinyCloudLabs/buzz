@@ -27,6 +27,27 @@ ARG EXTRA_CA_CERTS=
 # npmjs, so public CI builds are unaffected. Consumed by the web-builder stage.
 ARG NPM_REGISTRY=
 
+# ─── Stage 0: local OpenKey SDK vendor (integration builds) ────────────────
+# Compose supplies the `openkey-src` BuildKit context pointing at the sibling
+# OpenKey worktree. The web bundle consumes that real local @openkey/sdk from
+# vendor/openkey-sdk, without publishing it or checking generated artifacts in.
+FROM oven/bun:1.2-slim AS openkey-sdk-builder
+WORKDIR /openkey
+RUN printf '{"private":true,"workspaces":["packages/*"]}\n' > package.json
+COPY --from=openkey-src tsconfig.json tsconfig.json
+COPY --from=openkey-src packages/core/package.json packages/core/package.json
+COPY --from=openkey-src packages/sdk/package.json packages/sdk/package.json
+RUN bun install --ignore-scripts
+COPY --from=openkey-src packages/core packages/core
+COPY --from=openkey-src packages/sdk packages/sdk
+RUN cd packages/core && bun run build
+RUN cd packages/sdk && bun run build
+RUN mkdir -p /out \
+    && printf '%s\n' \
+      '{"name":"@openkey/sdk","version":"0.9.0","main":"./dist/index.js","module":"./dist/index.mjs","types":"./dist/index.d.ts","exports":{".":{"types":"./dist/index.d.ts","import":"./dist/index.mjs","require":"./dist/index.js"}},"files":["dist"]}' \
+      > /out/package.json \
+    && cp -R packages/sdk/dist /out/dist
+
 # ─── Stage 1: cargo-chef base ───────────────────────────────────────────────
 FROM rust:${RUST_VERSION}-${DEBIAN_VERSION} AS chef
 # Trust an optional corporate-proxy CA before any network fetch (no-op if unset).
@@ -51,7 +72,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # ─── Stage 3: cook dependencies, then build the binary ──────────────────────
 FROM chef AS builder
-RUN apt-get update \
+# APT::Sandbox::User=root: this environment's container runtime breaks the
+# status-fd handshake apt's default sandboxed `_apt` acquire user relies on
+# for gpgv verification (manual `gpgv`/`apt-key verify` on the exact same
+# downloaded InRelease succeeds; only apt's own sandboxed fetch reports
+# "invalid signature"). Running the acquire step as root sidesteps that
+# fd-passing bug without touching what gets verified — GPG signature
+# checking itself stays fully enabled.
+RUN apt-get update -o APT::Sandbox::User=root \
     && apt-get install -y --no-install-recommends \
         build-essential \
         pkg-config \
@@ -88,7 +116,7 @@ WORKDIR /build
 ARG EXTRA_CA_CERTS
 COPY --chmod=0644 ${EXTRA_CA_CERTS:-Dockerfile} /tmp/extra-ca/src
 RUN if [ -n "${EXTRA_CA_CERTS}" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+        apt-get update -o APT::Sandbox::User=root && apt-get install -y --no-install-recommends ca-certificates \
         && cp /tmp/extra-ca/src /usr/local/share/ca-certificates/extra-proxy-ca.crt \
         && update-ca-certificates \
         && rm -rf /var/lib/apt/lists/*; \
@@ -113,9 +141,18 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches/ patches/
 COPY web/package.json web/
 COPY admin-web/package.json admin-web/
+COPY --from=openkey-sdk-builder /out/package.json vendor/openkey-sdk/package.json
+COPY --from=openkey-sdk-builder /out/dist vendor/openkey-sdk/dist
 RUN pnpm install --frozen-lockfile --filter buzz-web --filter buzz-admin-web
 COPY web/ web/
 COPY admin-web/ admin-web/
+# Origin the OpenKey signing widget is loaded from (baked into the web bundle
+# at build time by Vite — `import.meta.env.VITE_OPENKEY_HOST`, see
+# web/src/shared/lib/signers/openkey-client.ts). Empty by default so public
+# builds keep the production default (https://openkey.so); local/Compose
+# builds pass e.g. --build-arg VITE_OPENKEY_HOST=http://localhost:5173.
+ARG VITE_OPENKEY_HOST=
+ENV VITE_OPENKEY_HOST=${VITE_OPENKEY_HOST}
 RUN pnpm -C web build && pnpm -C admin-web build
 
 # ─── Stage 5: shared runtime ────────────────────────────────────────────────
@@ -131,7 +168,7 @@ LABEL org.opencontainers.image.title="Buzz" \
       org.opencontainers.image.documentation="https://github.com/block/buzz#readme" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-RUN apt-get update \
+RUN apt-get update -o APT::Sandbox::User=root \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \

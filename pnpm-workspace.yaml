@@ -2,6 +2,12 @@ packages:
   - "desktop"
   - "web"
   - "admin-web"
+  # The real @openkey/sdk build output, vendored in from the OpenKey worktree
+  # (never published — see harness/openkey-sdk/Dockerfile and
+  # harness/README.md). Populated before `pnpm install` by both the root
+  # Dockerfile's `openkey-sdk-builder` stage and
+  # `scripts/vendor-openkey-sdk.sh` for local/host use. Not checked in.
+  - "vendor/*"
 allowBuilds:
   esbuild: true
 overrides:

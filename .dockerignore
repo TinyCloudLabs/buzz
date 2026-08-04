@@ -39,6 +39,9 @@ coverage/
 dist/
 playwright-report/
 test-results/
+**/test-results/
+harness/evidence/
+harness/.vendor/
 bin/
 sidecars/
 
