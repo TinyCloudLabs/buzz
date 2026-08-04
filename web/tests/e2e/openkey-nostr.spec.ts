@@ -400,11 +400,7 @@ async function getOpenKeyIdentity(page: Page): Promise<OpenKeyIdentity> {
 }
 
 async function gotoBuzzRoute(page: Page, route: string) {
-  await page.goto(`${BUZZ_WEB_URL}/invite/openkey-harness`, { waitUntil: "domcontentloaded" });
-  await page.evaluate((nextRoute) => {
-    window.history.pushState(null, "", nextRoute);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  }, route);
+  await page.goto(`${BUZZ_WEB_URL}${route}`, { waitUntil: "domcontentloaded" });
   await expect.poll(() => new URL(page.url()).pathname).toBe(route);
 }
 
@@ -467,6 +463,20 @@ function nostrFlowMessagesAfter(start: number): PostMessageRecord[] {
     const encoded = JSON.stringify(entry.data);
     return encoded.includes("openkey:nostr") || encoded.includes("openkey:ready") || encoded.includes("openkey:close") || encoded.includes("openkey:resize");
   });
+}
+
+function assertVersionedNostrTransport() {
+  const privileged = nostrFlowMessagesAfter(0).filter((entry) => {
+    const type = (entry.data as { type?: unknown } | null)?.type;
+    return typeof type === "string" && type.startsWith("openkey:nostr:");
+  });
+  expect(privileged.length).toBeGreaterThan(0);
+  for (const entry of privileged) {
+    expect(entry.data).toMatchObject({
+      requestId: expect.any(String),
+      protocolVersion: 1,
+    });
+  }
 }
 
 function assertNoSecretsOrWildcardTargetOrigins() {
@@ -575,7 +585,7 @@ async function publishOpenKeyMessage(
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async ({ page }) => {
+test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async ({ page, browser }) => {
   evidenceLog.length = 0;
   relayFrames.length = 0;
   postMessages.length = 0;
@@ -609,6 +619,24 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
   const identity = await connectOpenKeyIdentity(page);
   await gotoBuzzRoute(page, "/keys");
   expect((await getOpenKeyIdentity(page)).pubkey).toBe(identity.pubkey);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  expect((await getOpenKeyIdentity(page)).npub).toBe(identity.npub);
+
+  const freshContext = await browser.newContext({
+    viewport: { width: 1024, height: 768 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const freshPage = await freshContext.newPage();
+  try {
+    const freshIdentity = await connectOpenKeyIdentity(freshPage);
+    expect(freshIdentity.npub).toBe(identity.npub);
+    recordEvidence("openkey-identity-stable-fresh-context", {
+      npub: freshIdentity.npub,
+    });
+  } finally {
+    await freshContext.close();
+  }
 
   const { channelId } = await createChannelViaProtocolEvent();
   await gotoBuzzRoute(page, `/channels/${channelId}`);
@@ -674,6 +702,7 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
   recordEvidence("device-signer-valid-event", { eventId: deviceEvent.id, pubkey: deviceEvent.pubkey });
 
   await assertBuzzStorageHasNoSecrets(page);
+  assertVersionedNostrTransport();
   assertNoSecretsOrWildcardTargetOrigins();
 
   writeEvidenceFile(`openkey-nostr-${Date.now()}.json`, evidenceLog);
