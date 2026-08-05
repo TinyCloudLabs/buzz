@@ -23,7 +23,14 @@ const DEV_OTP = process.env.OPENKEY_DEV_OTP ?? "000000";
 const COMPOSER_PLACEHOLDER = "Message this channel…";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EVIDENCE_DIR = path.join(__dirname, "..", "..", "..", "harness", "evidence");
+const EVIDENCE_DIR = path.join(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "harness",
+  "evidence",
+);
 const SIGNER_STORAGE_KEY = "buzz.signerAccounts.v1";
 
 interface EvidenceRecord {
@@ -160,8 +167,8 @@ async function expectFrameInsideVisualViewport(page: Page, frame: Frame) {
   const frameElement = await frame.frameElement();
   const box = await frameElement.boundingBox();
   expect(box).not.toBeNull();
-  const cardHeight = await frameElement.evaluate((element) =>
-    element.parentElement?.getBoundingClientRect().height ?? 0,
+  const cardHeight = await frameElement.evaluate(
+    (element) => element.parentElement?.getBoundingClientRect().height ?? 0,
   );
 
   const viewport = await page.evaluate(() => ({
@@ -170,13 +177,22 @@ async function expectFrameInsideVisualViewport(page: Page, frame: Frame) {
     width: window.visualViewport?.width ?? window.innerWidth,
     height: window.visualViewport?.height ?? window.innerHeight,
   }));
-  expect((box as NonNullable<typeof box>).x).toBeGreaterThanOrEqual(viewport.left);
-  expect((box as NonNullable<typeof box>).y).toBeGreaterThanOrEqual(viewport.top);
-  expect((box as NonNullable<typeof box>).x + (box as NonNullable<typeof box>).width)
-    .toBeLessThanOrEqual(viewport.left + viewport.width);
-  expect((box as NonNullable<typeof box>).y + (box as NonNullable<typeof box>).height)
-    .toBeLessThanOrEqual(viewport.top + viewport.height);
-  expect(cardHeight).toBeGreaterThanOrEqual((box as NonNullable<typeof box>).height - 1);
+  expect((box as NonNullable<typeof box>).x).toBeGreaterThanOrEqual(
+    viewport.left,
+  );
+  expect((box as NonNullable<typeof box>).y).toBeGreaterThanOrEqual(
+    viewport.top,
+  );
+  expect(
+    (box as NonNullable<typeof box>).x + (box as NonNullable<typeof box>).width,
+  ).toBeLessThanOrEqual(viewport.left + viewport.width);
+  expect(
+    (box as NonNullable<typeof box>).y +
+      (box as NonNullable<typeof box>).height,
+  ).toBeLessThanOrEqual(viewport.top + viewport.height);
+  expect(cardHeight).toBeGreaterThanOrEqual(
+    (box as NonNullable<typeof box>).height - 1,
+  );
 }
 
 function captureRelayFrames(page: Page) {
@@ -269,15 +285,24 @@ function assertSignedEvent(
   expect(sanitized.kind).toBe(expected.kind);
   expect(sanitized.content).toBe(expected.content);
   expect(sanitized.tags).toEqual(expected.tags);
-  expect(Math.abs(Math.floor(Date.now() / 1000) - sanitized.created_at)).toBeLessThan(120);
+  expect(
+    Math.abs(Math.floor(Date.now() / 1000) - sanitized.created_at),
+  ).toBeLessThan(120);
 }
 
 function signAuthEvent(sk: Uint8Array, challenge: string): NostrEvent {
-  return finalizeEvent(makeAuthEvent(RELAY_WS_URL, challenge), sk) as NostrEvent;
+  return finalizeEvent(
+    makeAuthEvent(RELAY_WS_URL, challenge),
+    sk,
+  ) as NostrEvent;
 }
 
-async function createChannelViaProtocolEvent(
-): Promise<{ channelId: string; event: NostrEvent; authAck: unknown; eventAck: unknown }> {
+async function createChannelViaProtocolEvent(): Promise<{
+  channelId: string;
+  event: NostrEvent;
+  authAck: unknown;
+  eventAck: unknown;
+}> {
   const sk = generateSecretKey();
   const channelId = crypto.randomUUID();
   const channelName = `openkey-e2e-${Date.now()}`;
@@ -297,7 +322,9 @@ async function createChannelViaProtocolEvent(
   ) as NostrEvent;
 
   const socket = new WebSocket(RELAY_WS_URL);
-  await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) =>
+    socket.addEventListener("open", () => resolve(), { once: true }),
+  );
   const authAck = await authenticateNodeWs(socket, sk);
   const eventAck = await new Promise<unknown>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -326,9 +353,15 @@ async function createChannelViaProtocolEvent(
   return { channelId, event: signed, ...result };
 }
 
-async function authenticateNodeWs(socket: WebSocket, sk: Uint8Array): Promise<unknown> {
+async function authenticateNodeWs(
+  socket: WebSocket,
+  sk: Uint8Array,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Timed out authenticating query WS")), 15_000);
+    const timeout = setTimeout(
+      () => reject(new Error("Timed out authenticating query WS")),
+      15_000,
+    );
     socket.addEventListener("message", (event) => {
       const msg = JSON.parse(String(event.data));
       if (Array.isArray(msg) && msg[0] === "AUTH") {
@@ -350,7 +383,9 @@ async function authenticateNodeWs(socket: WebSocket, sk: Uint8Array): Promise<un
 async function queryStoredEvent(eventId: string): Promise<NostrEvent> {
   const sk = generateSecretKey();
   const socket = new WebSocket(RELAY_WS_URL);
-  await new Promise<void>((resolve) => socket.addEventListener("open", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) =>
+    socket.addEventListener("open", () => resolve(), { once: true }),
+  );
   await authenticateNodeWs(socket, sk);
 
   return new Promise((resolve, reject) => {
@@ -369,15 +404,28 @@ async function queryStoredEvent(eventId: string): Promise<NostrEvent> {
         resolve(msg[2] as NostrEvent);
       }
     });
-    socket.send(JSON.stringify(["REQ", subId, { ids: [eventId], kinds: [9], limit: 1 }]));
+    socket.send(
+      JSON.stringify(["REQ", subId, { ids: [eventId], kinds: [9], limit: 1 }]),
+    );
   });
 }
 
-async function openKeyFrameWithText(page: Page, text: string, timeoutMs = 20_000): Promise<Frame> {
+async function openKeyFrameWithText(
+  page: Page,
+  text: string,
+  timeoutMs = 20_000,
+): Promise<Frame> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    for (const frame of page.frames().filter((f) => f.url().startsWith(OPENKEY_URL))) {
-      if (await frame.getByText(text, { exact: false }).isVisible().catch(() => false)) {
+    for (const frame of page
+      .frames()
+      .filter((f) => f.url().startsWith(OPENKEY_URL))) {
+      if (
+        await frame
+          .getByText(text, { exact: false })
+          .isVisible()
+          .catch(() => false)
+      ) {
         return frame;
       }
     }
@@ -406,7 +454,9 @@ async function gotoBuzzRoute(page: Page, route: string) {
 
 async function connectOpenKeyIdentity(page: Page): Promise<OpenKeyIdentity> {
   await gotoBuzzRoute(page, "/keys");
-  const connectButton = page.getByRole("button", { name: "Connect OpenKey key" });
+  const connectButton = page.getByRole("button", {
+    name: "Connect OpenKey key",
+  });
   await expect(connectButton).toBeVisible({ timeout: 60_000 });
   await connectButton.click();
 
@@ -419,11 +469,19 @@ async function connectOpenKeyIdentity(page: Page): Promise<OpenKeyIdentity> {
   await frame.getByRole("button", { name: "Verify and continue" }).click();
   recordEvidence("openkey-dev-otp-complete", { email: DEV_EMAIL });
 
-  frame = await openKeyFrameWithText(page, "Connect your OpenKey Nostr identity");
+  frame = await openKeyFrameWithText(
+    page,
+    "Connect your OpenKey Nostr identity",
+  );
   await frame.getByRole("button", { name: "Connect" }).click();
 
   await expect
-    .poll(() => page.evaluate((key) => window.localStorage.getItem(key), SIGNER_STORAGE_KEY))
+    .poll(() =>
+      page.evaluate(
+        (key) => window.localStorage.getItem(key),
+        SIGNER_STORAGE_KEY,
+      ),
+    )
     .toContain("openkey");
   const identity = await getOpenKeyIdentity(page);
   recordEvidence("openkey-identity-connected", identity);
@@ -435,7 +493,8 @@ async function revokeGrantViaOpenKeyContract(page: Page, grantId: string) {
     const iframe = document.createElement("iframe");
     iframe.dataset.openkeyContractFrame = "true";
     iframe.src = `${openKeyUrl}/widget/embed/nostr/approve?origin=${encodeURIComponent(window.location.origin)}`;
-    iframe.style.cssText = "position:absolute;width:1px;height:1px;left:-9999px;top:-9999px";
+    iframe.style.cssText =
+      "position:absolute;width:1px;height:1px;left:-9999px;top:-9999px";
     document.body.appendChild(iframe);
   }, OPENKEY_URL);
 
@@ -443,16 +502,26 @@ async function revokeGrantViaOpenKeyContract(page: Page, grantId: string) {
   const result = await frame.evaluate(
     async ({ apiUrl, id }) => {
       const token = sessionStorage.getItem("openkey_session_token");
-      if (!token) return { ok: false, status: 0, body: "missing openkey_session_token" };
-      const response = await fetch(`${apiUrl}/api/keys/nostr/grants/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      return { ok: response.ok, status: response.status, body: await response.text() };
+      if (!token)
+        return { ok: false, status: 0, body: "missing openkey_session_token" };
+      const response = await fetch(
+        `${apiUrl}/api/keys/nostr/grants/${encodeURIComponent(id)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: await response.text(),
+      };
     },
     { apiUrl: OPENKEY_API_URL, id: grantId },
   );
-  await page.evaluate(() => document.querySelector("[data-openkey-contract-frame]")?.remove());
+  await page.evaluate(() =>
+    document.querySelector("[data-openkey-contract-frame]")?.remove(),
+  );
 
   expect(result).toMatchObject({ ok: true, status: 200 });
   recordEvidence("openkey-grant-revoked", { grantId, result });
@@ -461,7 +530,12 @@ async function revokeGrantViaOpenKeyContract(page: Page, grantId: string) {
 function nostrFlowMessagesAfter(start: number): PostMessageRecord[] {
   return postMessages.slice(start).filter((entry) => {
     const encoded = JSON.stringify(entry.data);
-    return encoded.includes("openkey:nostr") || encoded.includes("openkey:ready") || encoded.includes("openkey:close") || encoded.includes("openkey:resize");
+    return (
+      encoded.includes("openkey:nostr") ||
+      encoded.includes("openkey:ready") ||
+      encoded.includes("openkey:close") ||
+      encoded.includes("openkey:resize")
+    );
   });
 }
 
@@ -483,7 +557,9 @@ function assertNoSecretsOrWildcardTargetOrigins() {
   const nostrMessages = nostrFlowMessagesAfter(0);
   const encoded = JSON.stringify(nostrMessages);
   expect(encoded).not.toMatch(/nsec1/i);
-  expect(encoded).not.toMatch(/sessionToken|session_token|openkey_session_token|Bearer\s+/i);
+  expect(encoded).not.toMatch(
+    /sessionToken|session_token|openkey_session_token|Bearer\s+/i,
+  );
   for (const entry of nostrMessages) {
     if (entry.direction === "sent" && entry.targetOrigin !== undefined) {
       expect(entry.targetOrigin).not.toBe("*");
@@ -498,8 +574,12 @@ async function assertBuzzStorageHasNoSecrets(page: Page) {
   }));
   const encoded = JSON.stringify(storage);
   expect(encoded).not.toMatch(/nsec1/i);
-  expect(encoded).not.toMatch(/sessionToken|session_token|openkey_session_token|Bearer\s+|better-auth/i);
-  recordEvidence("buzz-storage-secret-scan", { storageKeys: Object.keys(storage.localStorage) });
+  expect(encoded).not.toMatch(
+    /sessionToken|session_token|openkey_session_token|Bearer\s+|better-auth/i,
+  );
+  recordEvidence("buzz-storage-secret-scan", {
+    storageKeys: Object.keys(storage.localStorage),
+  });
 }
 
 async function publishOpenKeyMessage(
@@ -514,7 +594,11 @@ async function publishOpenKeyMessage(
   await composer.fill(content);
   await page.getByRole("button", { name: "Send" }).click();
 
-  const authFrame = await openKeyFrameWithText(page, "Authenticate to relay", 7_500).catch(() => null);
+  const authFrame = await openKeyFrameWithText(
+    page,
+    "Authenticate to relay",
+    7_500,
+  ).catch(() => null);
   if (authFrame) {
     await authFrame.getByRole("button", { name: "Approve" }).click();
     recordEvidence("auth-consent-approved", { content });
@@ -540,10 +624,16 @@ async function publishOpenKeyMessage(
     tags: (authEvent as NostrEvent).tags,
   });
   const authOk = await waitForOk((authEvent as NostrEvent).id, authSent.seq);
-  recordEvidence("relay-auth-ok", { eventId: (authEvent as NostrEvent).id, ok: authOk.parsed });
+  recordEvidence("relay-auth-ok", {
+    eventId: (authEvent as NostrEvent).id,
+    ok: authOk.parsed,
+  });
 
   if (options.expectKind9Consent) {
-    const signFrame = await openKeyFrameWithText(page, "Send a channel message");
+    const signFrame = await openKeyFrameWithText(
+      page,
+      "Send a channel message",
+    );
     await expect(signFrame.getByText(content)).toBeVisible();
     recordEvidence("kind9-consent-visible", { content });
     await signFrame.getByRole("button", { name: "Approve" }).click();
@@ -585,7 +675,10 @@ async function publishOpenKeyMessage(
 test.describe.configure({ mode: "serial" });
 test.setTimeout(180_000);
 
-test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async ({ page, browser }) => {
+test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async ({
+  page,
+  browser,
+}) => {
   evidenceLog.length = 0;
   relayFrames.length = 0;
   postMessages.length = 0;
@@ -603,7 +696,11 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
     }
   });
 
-  const grantResponses: Array<{ id: string; allowedKinds: number[]; relayUrl: string | null }> = [];
+  const grantResponses: Array<{
+    id: string;
+    allowedKinds: number[];
+    relayUrl: string | null;
+  }> = [];
   page.on("response", async (response) => {
     if (
       response.url().startsWith(`${OPENKEY_API_URL}/api/keys/nostr/`) &&
@@ -640,14 +737,26 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
 
   const { channelId } = await createChannelViaProtocolEvent();
   await gotoBuzzRoute(page, `/channels/${channelId}`);
-  await page.getByPlaceholder(COMPOSER_PLACEHOLDER).waitFor({ state: "visible" });
+  await page
+    .getByPlaceholder(COMPOSER_PLACEHOLDER)
+    .waitFor({ state: "visible" });
 
-  const first = await publishOpenKeyMessage(page, identity, `openkey e2e first ${Date.now()}`, {
-    expectKind9Consent: true,
-  });
-  const second = await publishOpenKeyMessage(page, identity, `openkey e2e second ${Date.now()}`, {
-    expectKind9Consent: false,
-  });
+  const first = await publishOpenKeyMessage(
+    page,
+    identity,
+    `openkey e2e first ${Date.now()}`,
+    {
+      expectKind9Consent: true,
+    },
+  );
+  const second = await publishOpenKeyMessage(
+    page,
+    identity,
+    `openkey e2e second ${Date.now()}`,
+    {
+      expectKind9Consent: false,
+    },
+  );
   expect(first.pubkey).toBe(identity.pubkey);
   expect(second.pubkey).toBe(identity.pubkey);
 
@@ -661,7 +770,9 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
   });
   recordEvidence("relay-query-returned-stored-event", { eventId: queried.id });
 
-  const kind9Grant = grantResponses.find((grant) => grant.allowedKinds.includes(9));
+  const kind9Grant = grantResponses.find((grant) =>
+    grant.allowedKinds.includes(9),
+  );
   expect(kind9Grant).toBeTruthy();
   await revokeGrantViaOpenKeyContract(page, (kind9Grant as { id: string }).id);
 
@@ -669,13 +780,20 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
   const revokedContent = `openkey e2e revoked ${Date.now()}`;
   await page.getByPlaceholder(COMPOSER_PLACEHOLDER).fill(revokedContent);
   await page.getByRole("button", { name: "Send" }).click();
-  const revokedFrame = await openKeyFrameWithText(page, "Send a channel message");
+  const revokedFrame = await openKeyFrameWithText(
+    page,
+    "Send a channel message",
+  );
   await expect(revokedFrame.getByText(revokedContent)).toBeVisible();
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   expect(
     relayFrames.some((frame) => {
       const event = eventFromRelayFrame(frame);
-      return frame.seq > revokeStartSeq && event?.kind === 9 && event.content === revokedContent;
+      return (
+        frame.seq > revokeStartSeq &&
+        event?.kind === 9 &&
+        event.content === revokedContent
+      );
     }),
   ).toBe(false);
   await revokedFrame.getByRole("button", { name: "Cancel" }).click();
@@ -690,7 +808,11 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
   await page.getByRole("button", { name: "Send" }).click();
   const deviceEventFrame = await waitForRelayFrame((frame) => {
     const event = eventFromRelayFrame(frame);
-    return frame.seq > deviceStartSeq && event?.kind === 9 && event.content === deviceContent;
+    return (
+      frame.seq > deviceStartSeq &&
+      event?.kind === 9 &&
+      event.content === deviceContent
+    );
   });
   const deviceEvent = eventFromRelayFrame(deviceEventFrame) as NostrEvent;
   assertSignedEvent(deviceEvent, {
@@ -699,7 +821,10 @@ test("OpenKey Nostr signing harness against the Docker-served Buzz stack", async
     tags: [["h", channelId]],
   });
   await waitForOk(deviceEvent.id, deviceEventFrame.seq);
-  recordEvidence("device-signer-valid-event", { eventId: deviceEvent.id, pubkey: deviceEvent.pubkey });
+  recordEvidence("device-signer-valid-event", {
+    eventId: deviceEvent.id,
+    pubkey: deviceEvent.pubkey,
+  });
 
   await assertBuzzStorageHasNoSecrets(page);
   assertVersionedNostrTransport();

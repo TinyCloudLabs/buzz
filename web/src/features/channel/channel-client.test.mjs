@@ -122,6 +122,21 @@ test("publishChannelMessage completes the full AUTH -> OK -> EVENT -> OK handsha
   assert.equal(socket.closed, true);
 });
 
+test("publishChannelMessage fails before connecting when no active signer exists", async () => {
+  const factory = makeFactory();
+  await assert.rejects(
+    publishChannelMessage({
+      wsUrl: "wss://relay.test",
+      channelId: "channel-1",
+      content: "hello",
+      getSigner: () => null,
+      createWebSocket: factory,
+    }),
+    /Choose a key/,
+  );
+  assert.equal(factory.sockets.length, 0);
+});
+
 test("a false AUTH OK reconnects on a fresh WebSocket and fresh challenge, then succeeds", async () => {
   const factory = makeFactory();
   const signer = makeSigner("device");

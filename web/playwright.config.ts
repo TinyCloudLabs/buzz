@@ -38,7 +38,8 @@ export default defineConfig({
   webServer: process.env.BUZZ_E2E_DOCKER
     ? undefined
     : {
-        command: "pnpm exec vite preview --port 4173 --strictPort --host 127.0.0.1",
+        command:
+          "pnpm exec vite preview --port 4173 --strictPort --host 127.0.0.1",
         cwd: ".",
         reuseExistingServer: !process.env.CI,
         url: "http://127.0.0.1:4173",

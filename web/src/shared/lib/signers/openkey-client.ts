@@ -52,7 +52,11 @@ function mapOpenKeyError(error: NostrError | undefined): SignerError {
 }
 
 function identityFromSdk(identity: NostrIdentity): OpenKeyIdentity {
-  return { keyId: identity.keyId, pubkey: identity.pubkey, npub: identity.npub };
+  return {
+    keyId: identity.keyId,
+    pubkey: identity.pubkey,
+    npub: identity.npub,
+  };
 }
 
 export type OpenKeyNostrFactory = (host: string) => OpenKeyNostr;

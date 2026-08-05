@@ -19,6 +19,9 @@ RUN mkdir -p /built \
       > /built/package.json \
     && cp -R packages/sdk/dist /built/dist
 
+FROM scratch AS artifact
+COPY --from=builder /built /
+
 FROM debian:bookworm-slim AS exporter
 COPY --from=builder /built /built
 CMD ["sh", "-c", "cp -R /built/. /out/"]

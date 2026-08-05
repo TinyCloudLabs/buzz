@@ -52,8 +52,12 @@ export async function signWithAccount(
   };
 
   if (account.kind === "device") {
-    // signNostrEvent already applies verifySignedEvent internally.
-    return signNostrEvent(unsigned);
+    // signNostrEvent verifies the extension's response against the extension's
+    // current getPublicKey() result. Verify once more against the account the
+    // UI displayed and the caller selected: an extension can switch accounts
+    // between account discovery and signing.
+    const signed = await signNostrEvent(unsigned);
+    return verifySignedEvent(unsigned, signed, account.pubkey);
   }
 
   // OpenKey's sign-event API (unlike the device signer) checks the

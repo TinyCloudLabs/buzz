@@ -7,10 +7,9 @@
 __pycache__/
 *.pyc
 
-# Real @openkey/sdk build output vendored in from the OpenKey worktree — a
-# build artifact, never checked in. See harness/openkey-sdk/Dockerfile,
-# scripts/vendor-openkey-sdk.sh, and the `openkey-sdk-builder` Dockerfile
-# stage, all of which populate this from the same OpenKey build context.
+# Real @openkey/sdk build output. See openkey-sdk.ref,
+# scripts/vendor-openkey-sdk.sh, and the `openkey-sdk-builder` Dockerfile stage.
+# Clean host and release builds both compile the same immutable OpenKey commit.
 /vendor/openkey-sdk/
 
 # E2E harness vendored artifacts and reports (see harness/README.md)

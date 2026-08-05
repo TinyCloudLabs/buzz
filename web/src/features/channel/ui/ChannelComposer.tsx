@@ -22,6 +22,8 @@ type SendStatus = "idle" | "sending" | "sent" | "error";
  */
 export function ChannelComposer({ channelId }: { channelId: string }) {
   const { activeAccount } = useSignerAccounts();
+  const activeAccountRef = React.useRef(activeAccount);
+  activeAccountRef.current = activeAccount;
   const [content, setContent] = React.useState("");
   const [status, setStatus] = React.useState<SendStatus>("idle");
   const [error, setError] = React.useState<string | null>(null);
@@ -34,17 +36,24 @@ export function ChannelComposer({ channelId }: { channelId: string }) {
     setStatus("sending");
     setError(null);
 
-    const signer: ChannelMessageSigner = {
-      accountId: account.id,
-      signEvent: (template) => signWithAccount(account, template),
-    };
-
     try {
       await publishChannelMessage({
         wsUrl: relayWsUrl(),
         channelId,
         content: trimmed,
-        getSigner: () => signer,
+        // Read through a ref rather than closing over the account selected when
+        // send() began. OpenKey consent can remain pending while the active
+        // account changes; channel-client must observe that change and restart
+        // with a fresh NIP-42 challenge before publishing anything.
+        getSigner: () => {
+          const current = activeAccountRef.current;
+          if (!current) return null;
+          const signer: ChannelMessageSigner = {
+            accountId: current.id,
+            signEvent: (template) => signWithAccount(current, template),
+          };
+          return signer;
+        },
       });
       setStatus("sent");
       setContent("");

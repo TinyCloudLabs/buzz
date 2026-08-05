@@ -27,10 +27,10 @@ ARG EXTRA_CA_CERTS=
 # npmjs, so public CI builds are unaffected. Consumed by the web-builder stage.
 ARG NPM_REGISTRY=
 
-# ─── Stage 0: local OpenKey SDK vendor (integration builds) ────────────────
-# Compose supplies the `openkey-src` BuildKit context pointing at the sibling
-# OpenKey worktree. The web bundle consumes that real local @openkey/sdk from
-# vendor/openkey-sdk, without publishing it or checking generated artifacts in.
+# ─── Stage 0: OpenKey SDK vendor ─────────────────────────────────
+# Release CI supplies `openkey-src` from the immutable commit in
+# openkey-sdk.ref. Compose may instead point it at a sibling OpenKey worktree
+# for local cross-repo development. Generated SDK artifacts are never checked in.
 FROM oven/bun:1.2-slim AS openkey-sdk-builder
 WORKDIR /openkey
 RUN printf '{"private":true,"workspaces":["packages/*"]}\n' > package.json

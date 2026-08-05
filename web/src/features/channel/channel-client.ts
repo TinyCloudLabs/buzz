@@ -58,7 +58,7 @@ export interface PublishChannelMessageOptions {
   channelId: string;
   content: string;
   /** Read at the start of each attempt, and again after each signing step, to detect identity changes. */
-  getSigner: () => ChannelMessageSigner;
+  getSigner: () => ChannelMessageSigner | null;
   createWebSocket?: WebSocketFactory;
   maxAttempts?: number;
 }
@@ -101,11 +101,15 @@ function attemptPublish(opts: {
   wsUrl: string;
   channelId: string;
   content: string;
-  getSigner: () => ChannelMessageSigner;
+  getSigner: () => ChannelMessageSigner | null;
   createWebSocket: WebSocketFactory;
 }): Promise<{ eventId: string }> {
   return new Promise((resolve, reject) => {
     const signerAtStart = opts.getSigner();
+    if (!signerAtStart) {
+      reject(new Error("Choose a key before publishing a channel message."));
+      return;
+    }
     let state: AttemptState = "awaiting-auth-challenge";
     let authEventId: string | null = null;
     let messageEventId: string | null = null;
@@ -168,7 +172,7 @@ function attemptPublish(opts: {
 
     /** True once signing settles if the active signer changed underneath us (e.g. user picked a different key in "Your keys" while a consent card was open). */
     const identityChanged = () =>
-      opts.getSigner().accountId !== signerAtStart.accountId;
+      opts.getSigner()?.accountId !== signerAtStart.accountId;
 
     const onMessage = (event: { data?: unknown }) => {
       let data: unknown;

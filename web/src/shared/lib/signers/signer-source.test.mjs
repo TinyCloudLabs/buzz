@@ -53,6 +53,36 @@ test("signWithAccount signs with the device path and returns a verified event", 
   assert.equal(signed.content, "hi from device");
 });
 
+test("signWithAccount rejects when a browser extension changes keys after the account was shown", async () => {
+  const selectedSecret = generateSecretKey();
+  const extensionSecret = generateSecretKey();
+  const selectedAccount = {
+    kind: "device",
+    id: DEVICE_ACCOUNT_ID,
+    pubkey: getPublicKey(selectedSecret),
+    label: "This device (browser extension)",
+  };
+  globalThis.window = {
+    nostr: {
+      async getPublicKey() {
+        return getPublicKey(extensionSecret);
+      },
+      async signEvent(template) {
+        return finalizeEvent(template, extensionSecret);
+      },
+    },
+  };
+
+  await assert.rejects(
+    signWithAccount(selectedAccount, {
+      kind: 9,
+      tags: [["h", "general"]],
+      content: "must stay on the selected account",
+    }),
+    /different pubkey/,
+  );
+});
+
 test("signWithAccount routes 'openkey' accounts through the injected OpenKeyClient and verifies the result", async () => {
   const sk = generateSecretKey();
   const pk = getPublicKey(sk);
