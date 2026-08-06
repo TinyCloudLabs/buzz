@@ -58,6 +58,9 @@ jobs:
             web:
               - 'scripts/check-file-sizes-core.mjs'
               - 'scripts/check-file-sizes-core.test.mjs'
+              - 'scripts/vendor-openkey-sdk.sh'
+              - 'harness/openkey-sdk/**'
+              - 'openkey-sdk.ref'
               - 'web/**'
               - 'pnpm-lock.yaml'
             mobile:
@@ -798,6 +801,8 @@ jobs:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: pnpm-${{ runner.os }}-
+      - name: Build pinned OpenKey SDK workspace package
+        run: scripts/vendor-openkey-sdk.sh
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Web lint and format

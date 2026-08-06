@@ -57,6 +57,8 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "openkey-sdk.ref"
+      - "harness/openkey-sdk/**"
       - "patches/**"
   workflow_dispatch:
     inputs:
@@ -124,6 +126,10 @@ jobs:
             [worker.oci]
               max-parallelism = 2
 
+      - name: Resolve pinned OpenKey SDK source
+        id: openkey-sdk
+        run: echo "context=https://github.com/TinyCloudLabs/openkey.git#$(tr -d '[:space:]' < openkey-sdk.ref)" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         # Skip on pull_request from forks — no GHCR creds, build-only.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -168,6 +174,8 @@ jobs:
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
         with:
           context: .
+          build-contexts: |
+            openkey-src=${{ steps.openkey-sdk.outputs.context }}
           file: ./Dockerfile
           target: runtime
           platforms: ${{ matrix.platform }}
@@ -179,13 +187,15 @@ jobs:
           cache-from: |
             type=registry,ref=${{ env.IMAGE_NAME }}-buildcache:${{ matrix.arch }}
           cache-to: |
-            ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref={0}-buildcache:{1},mode=max,compression=zstd', env.IMAGE_NAME, matrix.arch) || '' }}
+            ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}-buildcache:{1},mode=max,compression=zstd', env.IMAGE_NAME, matrix.arch) || '' }}
 
       - name: Build and push debug image by digest
         id: build-debug
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
         with:
           context: .
+          build-contexts: |
+            openkey-src=${{ steps.openkey-sdk.outputs.context }}
           file: ./Dockerfile
           target: runtime-debug
           platforms: ${{ matrix.platform }}
@@ -402,7 +412,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=ghcr.io/block/buzz-push-gateway,push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
           cache-from: type=registry,ref=ghcr.io/block/buzz-push-gateway-buildcache:${{ matrix.arch }}
-          cache-to: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && format('type=registry,ref=ghcr.io/block/buzz-push-gateway-buildcache:{0},mode=max,compression=zstd', matrix.arch) || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref=ghcr.io/block/buzz-push-gateway-buildcache:{0},mode=max,compression=zstd', matrix.arch) || '' }}
       - name: Export digest
         if: github.event_name != 'pull_request'
         env:

@@ -7,6 +7,17 @@
 __pycache__/
 *.pyc
 
+# Real @openkey/sdk build output. See openkey-sdk.ref,
+# scripts/vendor-openkey-sdk.sh, and the `openkey-sdk-builder` Dockerfile stage.
+# Clean host and release builds both compile the same immutable OpenKey commit.
+/vendor/openkey-sdk/
+
+# E2E harness vendored artifacts and reports (see harness/README.md)
+/harness/.vendor/
+/harness/evidence/
+/harness/test-results/
+/harness/playwright-report/
+
 # lefthook-generated hook scripts (machine-specific)
 .hooks/
 

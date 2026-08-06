@@ -2,6 +2,11 @@ packages:
   - "desktop"
   - "web"
   - "admin-web"
+  # Real @openkey/sdk build output from the immutable OpenKey commit in
+  # openkey-sdk.ref (or a local context override). Populated before
+  # `pnpm install` by the root Dockerfile or scripts/vendor-openkey-sdk.sh.
+  # Generated artifacts are not checked in.
+  - "vendor/*"
 allowBuilds:
   esbuild: true
 overrides:

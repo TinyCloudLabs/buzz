@@ -296,6 +296,8 @@ importers:
         specifier: ^8.0.0
         version: 8.0.16(@types/node@25.6.0)(jiti@2.7.0)(yaml@2.9.0)
 
+  vendor/openkey-sdk: {}
+
   web:
     dependencies:
       '@fontsource-variable/inter':
@@ -304,6 +306,9 @@ importers:
       '@isomorphic-git/lightning-fs':
         specifier: ^4.6.2
         version: 4.6.2
+      '@openkey/sdk':
+        specifier: workspace:*
+        version: link:../vendor/openkey-sdk
       '@radix-ui/react-slot':
         specifier: ^1.2.4
         version: 1.3.3(@types/react@19.2.17)(react@19.2.8)

@@ -1,0 +1,299 @@
+# =============================================================================
+# Buzz + OpenKey Nostr-signing local integration stack.
+#
+# A fully local, cross-repository Docker Compose deployment: the Buzz relay
+# (WS + REST + its own web UI, all on one origin) plus a full local OpenKey
+# deployment (API + web widget + its own Postgres) that custodies a
+# server-side Nostr (secp256k1/BIP-340) signing key and exposes it to Buzz
+# only through the browser postMessage widget contract — see
+# web/src/shared/lib/signers/openkey-client.ts and, on the OpenKey side,
+# apps/web/src/routes/widget/embed/nostr/approve.
+#
+# A SEPARATE Compose project (`buzz-openkey`) from the default dev stack
+# (docker-compose.yml) so the two never collide — no fixed container_names,
+# no host ports on internal-only infrastructure (Postgres/Redis/MinIO), and a
+# dedicated network. Only the three services a browser or the E2E harness
+# needs to reach directly are published to the host, on each project's own
+# conventional port:
+#
+#   Buzz (relay + web UI)  → http://localhost:3000  (ws://localhost:3000)
+#   OpenKey API             → http://localhost:3001
+#   OpenKey web (widget)    → http://localhost:5173
+#
+# OpenKey is consumed from its own local worktree checkout — never published,
+# never vendored into this repo. OPENKEY_REPO_PATH must point at that
+# checkout; the default below matches this machine's sibling-worktree layout
+# (see harness/README.md). Override with an env var or `--env-file` if yours
+# differs:
+#
+#   OPENKEY_REPO_PATH=/path/to/openkey docker compose -f docker-compose.openkey.yml up --build
+#
+# Bring up:    docker compose -f docker-compose.openkey.yml up --build -d
+# Tear down:   docker compose -f docker-compose.openkey.yml down -v
+# =============================================================================
+name: buzz-openkey
+
+x-openkey-context: &openkey-context ${OPENKEY_REPO_PATH:-../../../openkey/feat/openkey-nostr-signing}
+
+services:
+  # ---------------------------------------------------------------------------
+  # Buzz infrastructure (internal-only — no host ports)
+  # ---------------------------------------------------------------------------
+  buzz-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: buzz
+      POSTGRES_PASSWORD: buzz_dev
+      POSTGRES_DB: buzz
+    volumes:
+      - buzz-openkey-postgres-data:/var/lib/postgresql/data
+    networks: [buzz-openkey-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buzz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  buzz-redis:
+    image: redis:7-alpine
+    networks: [buzz-openkey-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  buzz-minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: buzz_dev
+      MINIO_ROOT_PASSWORD: buzz_dev_secret
+    volumes:
+      - buzz-openkey-minio-data:/data
+    networks: [buzz-openkey-net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot: create + lock down the media bucket. Same recipe as the default
+  # dev stack's minio-init in docker-compose.yml.
+  buzz-minio-init:
+    image: minio/mc:latest
+    depends_on:
+      buzz-minio:
+        condition: service_healthy
+    networks: [buzz-openkey-net]
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://buzz-minio:9000 buzz_dev buzz_dev_secret &&
+        mc mb --ignore-existing local/buzz-media &&
+        mc anonymous set none local/buzz-media
+      "
+    restart: "no"
+
+  # One-shot: apply pending Buzz relay migrations via `buzz-admin migrate`
+  # before the relay starts. Clean-start gap: without this, Buzz's readiness
+  # check could pass against a schema that isn't fully migrated yet, and the
+  # deployment community wouldn't be bound until someone manually ran
+  # `buzz-admin migrate` inside the container. Reuses the same image/build as
+  # the `buzz` service (shared tag) so no extra Dockerfile/context is needed.
+  buzz-migrate:
+    # No `build:` here on purpose: this reuses the already-built `buzz`
+    # image by tag (built by the `buzz` service below) rather than
+    # triggering a second, independent build of the same Dockerfile.
+    image: buzz-openkey/buzz:local
+    # The image's ENTRYPOINT is hardcoded to /usr/local/bin/buzz-relay, so a
+    # bare `command:` override just becomes extra args to buzz-relay, not a
+    # different binary. Override `entrypoint:` to actually invoke buzz-admin.
+    entrypoint: ["/usr/local/bin/buzz-admin"]
+    command: ["migrate"]
+    environment:
+      DATABASE_URL: postgres://buzz:buzz_dev@buzz-postgres:5432/buzz
+    depends_on:
+      buzz-postgres:
+        condition: service_healthy
+    networks: [buzz-openkey-net]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Buzz relay + web UI (built from this repo's own Dockerfile)
+  # ---------------------------------------------------------------------------
+  buzz:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        # Build the real, local @openkey/sdk into Buzz's web bundle without
+        # publishing it or checking generated SDK artifacts into this repo.
+        openkey-src: *openkey-context
+      args:
+        # Baked into the web bundle at build time — where the OpenKey signing
+        # widget iframe is loaded from (see web/src/shared/lib/signers/openkey-client.ts).
+        # Must be the host-reachable OpenKey web origin, not the in-network
+        # service name: the browser (not this container) loads the iframe.
+        VITE_OPENKEY_HOST: ${VITE_OPENKEY_HOST:-http://localhost:5173}
+    # Durable, explicit local tag (rather than the ephemeral project-scoped
+    # name Compose would otherwise assign) so downstream stages/harnesses can
+    # reference this image by a stable name across rebuilds.
+    image: buzz-openkey/buzz:local
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://buzz:buzz_dev@buzz-postgres:5432/buzz
+      REDIS_URL: redis://buzz-redis:6379
+      BUZZ_BIND_ADDR: 0.0.0.0:3000
+      # NIP-42 AUTH challenges advertise this URL; must match how the browser
+      # (and the E2E harness) actually reaches the relay.
+      RELAY_URL: ws://localhost:3000
+      BUZZ_S3_ENDPOINT: http://buzz-minio:9000
+      BUZZ_S3_ACCESS_KEY: buzz_dev
+      BUZZ_S3_SECRET_KEY: buzz_dev_secret
+      BUZZ_S3_BUCKET: buzz-media
+      BUZZ_MEDIA_BASE_URL: http://localhost:3000/media
+      BUZZ_HEALTH_PORT: "8080"
+      BUZZ_METRICS_PORT: "9102"
+    depends_on:
+      buzz-postgres:
+        condition: service_healthy
+      buzz-redis:
+        condition: service_healthy
+      buzz-minio-init:
+        condition: service_completed_successfully
+      buzz-migrate:
+        condition: service_completed_successfully
+    networks: [buzz-openkey-net]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/_readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # OpenKey infrastructure (internal-only — no host ports)
+  # ---------------------------------------------------------------------------
+  openkey-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: openkey
+      POSTGRES_PASSWORD: openkey
+      POSTGRES_DB: openkey
+    volumes:
+      - buzz-openkey-openkey-postgres-data:/var/lib/postgresql/data
+    networks: [buzz-openkey-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openkey"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot: `prisma migrate deploy` against the tracked migration history
+  # (packages/db/prisma/migrations/20260731051724_add_nostr_keys_and_grants
+  # among others) — never `db push` here, per OpenKey's own CLAUDE.md.
+  # Reuses the API image's `deps` stage: bun installed + the Prisma schema
+  # copied in, nothing else needed to run `bun run db:migrate:apply`.
+  openkey-migrate:
+    build:
+      context: *openkey-context
+      dockerfile: Dockerfile
+      target: deps
+    command: ["bun", "run", "db:migrate:apply"]
+    environment:
+      DATABASE_URL: postgresql://openkey:openkey@openkey-postgres:5432/openkey
+    depends_on:
+      openkey-postgres:
+        condition: service_healthy
+    networks: [buzz-openkey-net]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # OpenKey API + web (built from the local OpenKey worktree — see
+  # OPENKEY_REPO_PATH above)
+  # ---------------------------------------------------------------------------
+  openkey-api:
+    build:
+      context: *openkey-context
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgresql://openkey:openkey@openkey-postgres:5432/openkey
+      TEE_MODE: development
+      DEV_SEALING_KEY: openkey-dev-sealing-key-32bytes!
+      WEBAUTHN_RP_ID: localhost
+      WEBAUTHN_ORIGIN: http://localhost:5173
+      BETTER_AUTH_URL: http://localhost:3001
+      BETTER_AUTH_SECRET: buzz-openkey-harness-dev-secret-not-for-prod
+      CORS_ORIGIN: http://localhost:5173,http://localhost:5174
+      API_PORT: "3001"
+    depends_on:
+      openkey-postgres:
+        condition: service_healthy
+      openkey-migrate:
+        condition: service_completed_successfully
+    networks: [buzz-openkey-net]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  openkey-web:
+    build:
+      context: *openkey-context
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the client bundle — must be host-reachable (the browser
+        # loads this, not this container).
+        VITE_API_URL: http://localhost:3001
+    ports:
+      - "5173:5173"
+    depends_on:
+      - openkey-api
+    networks: [buzz-openkey-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # E2E harness support: builds the *real*, unreleased @openkey/sdk package
+  # straight from the local OpenKey worktree (via a BuildKit additional
+  # build context — never published, never hand-copied into this repo) and
+  # drops its self-contained dist/ output on the host for
+  # harness/e2e/openkey-sdk-verify.mjs to import directly. Re-run whenever
+  # the OpenKey worktree changes:
+  #
+  #   docker compose -f docker-compose.openkey.yml build openkey-sdk-vendor
+  #   docker compose -f docker-compose.openkey.yml run --rm openkey-sdk-vendor
+  # ---------------------------------------------------------------------------
+  openkey-sdk-vendor:
+    build:
+      context: ./harness/openkey-sdk
+      additional_contexts:
+        openkey-src: *openkey-context
+    volumes:
+      - ./harness/.vendor/openkey-sdk:/out
+    networks: [buzz-openkey-net]
+    profiles: ["sdk-vendor"]
+    restart: "no"
+
+volumes:
+  buzz-openkey-postgres-data:
+  buzz-openkey-minio-data:
+  buzz-openkey-openkey-postgres-data:
+
+networks:
+  buzz-openkey-net:
+    driver: bridge
