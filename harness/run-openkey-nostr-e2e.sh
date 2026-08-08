@@ -126,8 +126,8 @@ pnpm -C web test
 # Build every service from registry sources with no reusable BuildKit layer,
 # then start the newly built images. The happy-path result therefore cannot be
 # supplied by an earlier image, cache, volume, or ignored generated output.
-"${compose[@]}" build --pull --no-cache
 compose_started=1
+"${compose[@]}" build --pull --no-cache
 "${compose[@]}" up -d --force-recreate --no-build
 
 wait_for_compose_health "buzz"
