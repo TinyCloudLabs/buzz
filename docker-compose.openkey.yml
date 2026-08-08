@@ -20,11 +20,9 @@
 #   OpenKey API             → http://localhost:3001
 #   OpenKey web (widget)    → http://localhost:5173
 #
-# OpenKey is consumed from its own local worktree checkout — never published,
-# never vendored into this repo. OPENKEY_REPO_PATH must point at that
-# checkout; the default below matches this machine's sibling-worktree layout
-# (see harness/README.md). Override with an env var or `--env-file` if yours
-# differs:
+# OpenKey is consumed from its own local worktree checkout — never published
+# or copied into this repository. OPENKEY_REPO_PATH is required; the harness
+# checks it before Compose is invoked (see harness/README.md):
 #
 #   OPENKEY_REPO_PATH=/path/to/openkey docker compose -f docker-compose.openkey.yml up --build
 #
@@ -33,7 +31,7 @@
 # =============================================================================
 name: buzz-openkey
 
-x-openkey-context: &openkey-context ${OPENKEY_REPO_PATH:-../../../openkey/feat/openkey-nostr-signing}
+x-openkey-context: &openkey-context ${OPENKEY_REPO_PATH:?Set OPENKEY_REPO_PATH to a local OpenKey checkout}
 
 services:
   # ---------------------------------------------------------------------------
@@ -110,7 +108,7 @@ services:
     # No `build:` here on purpose: this reuses the already-built `buzz`
     # image by tag (built by the `buzz` service below) rather than
     # triggering a second, independent build of the same Dockerfile.
-    image: buzz-openkey/buzz:local
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/buzz:local
     # The image's ENTRYPOINT is hardcoded to /usr/local/bin/buzz-relay, so a
     # bare `command:` override just becomes extra args to buzz-relay, not a
     # different binary. Override `entrypoint:` to actually invoke buzz-admin.
@@ -141,10 +139,10 @@ services:
         # Must be the host-reachable OpenKey web origin, not the in-network
         # service name: the browser (not this container) loads the iframe.
         VITE_OPENKEY_HOST: ${VITE_OPENKEY_HOST:-http://localhost:5173}
-    # Durable, explicit local tag (rather than the ephemeral project-scoped
-    # name Compose would otherwise assign) so downstream stages/harnesses can
-    # reference this image by a stable name across rebuilds.
-    image: buzz-openkey/buzz:local
+    # The harness supplies a unique prefix so one invocation cannot reuse or
+    # overwrite another's images. A manual Compose run keeps the documented
+    # buzz-openkey default prefix.
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/buzz:local
     ports:
       - "3000:3000"
     environment:
@@ -202,14 +200,18 @@ services:
   # One-shot: `prisma migrate deploy` against the tracked migration history
   # (packages/db/prisma/migrations/20260731051724_add_nostr_keys_and_grants
   # among others) — never `db push` here, per OpenKey's own CLAUDE.md.
-  # Reuses the API image's `deps` stage: bun installed + the Prisma schema
-  # copied in, nothing else needed to run `bun run db:migrate:apply`.
+  # Reuses the final API image built below. The runtime already carries Bun,
+  # Prisma, the schema, and root package scripts; using it avoids a second
+  # concurrent BuildKit build of the same OpenKey dependency graph.
   openkey-migrate:
-    build:
-      context: *openkey-context
-      dockerfile: Dockerfile
-      target: deps
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/openkey-api:local
     command: ["bun", "run", "db:migrate:apply"]
+    volumes:
+      # Keep Prisma's datasource config available to the migration-only runtime.
+      # The API image also carries these files; mounting them makes the command
+      # work with a just-built image while keeping the source checkout explicit.
+      - ${OPENKEY_REPO_PATH}/prisma.config.ts:/app/prisma.config.ts:ro
+      - ${OPENKEY_REPO_PATH}/packages/db/prisma.config.ts:/app/packages/db/prisma.config.ts:ro
     environment:
       DATABASE_URL: postgresql://openkey:openkey@openkey-postgres:5432/openkey
     depends_on:
@@ -223,6 +225,7 @@ services:
   # OPENKEY_REPO_PATH above)
   # ---------------------------------------------------------------------------
   openkey-api:
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/openkey-api:local
     build:
       context: *openkey-context
       dockerfile: Dockerfile
@@ -266,28 +269,6 @@ services:
       - openkey-api
     networks: [buzz-openkey-net]
     restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # E2E harness support: builds the *real*, unreleased @openkey/sdk package
-  # straight from the local OpenKey worktree (via a BuildKit additional
-  # build context — never published, never hand-copied into this repo) and
-  # drops its self-contained dist/ output on the host for
-  # harness/e2e/openkey-sdk-verify.mjs to import directly. Re-run whenever
-  # the OpenKey worktree changes:
-  #
-  #   docker compose -f docker-compose.openkey.yml build openkey-sdk-vendor
-  #   docker compose -f docker-compose.openkey.yml run --rm openkey-sdk-vendor
-  # ---------------------------------------------------------------------------
-  openkey-sdk-vendor:
-    build:
-      context: ./harness/openkey-sdk
-      additional_contexts:
-        openkey-src: *openkey-context
-    volumes:
-      - ./harness/.vendor/openkey-sdk:/out
-    networks: [buzz-openkey-net]
-    profiles: ["sdk-vendor"]
-    restart: "no"
 
 volumes:
   buzz-openkey-postgres-data:

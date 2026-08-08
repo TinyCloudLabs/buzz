@@ -12,6 +12,7 @@ import {
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import WebSocket from "ws";
 
 const BUZZ_WEB_URL = process.env.BUZZ_WEB_URL ?? "http://localhost:3000";
 const OPENKEY_URL = process.env.OPENKEY_URL ?? "http://localhost:5173";

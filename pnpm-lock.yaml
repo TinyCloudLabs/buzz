@@ -23,6 +23,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.4.6
         version: 2.4.16
+      ws:
+        specifier: ^8.18.3
+        version: 8.21.1
 
   admin-web:
     dependencies:

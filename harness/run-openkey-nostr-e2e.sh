@@ -2,15 +2,68 @@
 set -euo pipefail
 
 BUZZ_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OPENKEY_REPO_PATH="${OPENKEY_REPO_PATH:-/Users/samgbafa/conductor/workspaces/tinycloud-dev/perth/worktrees/openkey/feat/openkey-nostr-signing}"
 COMPOSE_FILE="${COMPOSE_FILE:-$BUZZ_ROOT/docker-compose.openkey.yml}"
 
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+for command in docker bun pnpm git; do
+  require_command "$command"
+done
+
+if [[ -z "${OPENKEY_REPO_PATH:-}" ]]; then
+  cat >&2 <<'EOF'
+OPENKEY_REPO_PATH is required and must name a clean local OpenKey checkout.
+Example: OPENKEY_REPO_PATH=../openkey ./harness/run-openkey-nostr-e2e.sh
+EOF
+  exit 1
+fi
+
+if [[ ! -f "$OPENKEY_REPO_PATH/package.json" ]] || ! git -C "$OPENKEY_REPO_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "OPENKEY_REPO_PATH is not an OpenKey checkout: $OPENKEY_REPO_PATH" >&2
+  exit 1
+fi
+
+OPENKEY_REPO_PATH="$(cd "$OPENKEY_REPO_PATH" && pwd -P)"
+if ! git -C "$OPENKEY_REPO_PATH" diff --quiet || ! git -C "$OPENKEY_REPO_PATH" diff --cached --quiet; then
+  echo "OPENKEY_REPO_PATH must be clean; commit or stash its tracked changes first." >&2
+  exit 1
+fi
+
+# Each run receives fresh Compose volumes and image tags. This prevents a
+# previous database, image, or generated artifact from becoming an unstated
+# test prerequisite, and makes cleanup safe to scope to this invocation.
+COMPOSE_PROJECT_NAME="${BUZZ_OPENKEY_COMPOSE_PROJECT:-buzz-openkey-e2e-$$}"
+BUZZ_OPENKEY_IMAGE_PREFIX="${BUZZ_OPENKEY_IMAGE_PREFIX:-$COMPOSE_PROJECT_NAME}"
+compose=(docker compose --project-name "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE")
+
 export OPENKEY_REPO_PATH
+export BUZZ_OPENKEY_IMAGE_PREFIX
 export BUZZ_WEB_URL="${BUZZ_WEB_URL:-http://localhost:3000}"
 export OPENKEY_API_URL="${OPENKEY_API_URL:-http://localhost:3001}"
 export OPENKEY_URL="${OPENKEY_URL:-http://localhost:5173}"
 export RELAY_WS_URL="${RELAY_WS_URL:-ws://localhost:3000}"
 export BUZZ_E2E_DOCKER=1
+
+compose_started=0
+cleanup() {
+  local result=$?
+  if [[ "$compose_started" == 1 ]]; then
+    # Evidence lives in the checkout, not in Compose state. Removing only this
+    # invocation's project, volumes, and uniquely tagged images keeps repeated
+    # clean runs from accumulating Docker Desktop storage.
+    "${compose[@]}" down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+    docker image rm \
+      "$BUZZ_OPENKEY_IMAGE_PREFIX/buzz:local" \
+      "$BUZZ_OPENKEY_IMAGE_PREFIX/openkey-api:local" >/dev/null 2>&1 || true
+  fi
+  exit "$result"
+}
+trap cleanup EXIT
 
 wait_for_http() {
   local url="$1"
@@ -29,7 +82,7 @@ wait_for_compose_health() {
   local service="$1"
   for _ in $(seq 1 90); do
     local container_id
-    container_id="$(docker compose -f "$COMPOSE_FILE" ps -q "$service")"
+    container_id="$("${compose[@]}" ps -q "$service")"
     if [[ -n "$container_id" ]]; then
       local status
       status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
@@ -50,8 +103,13 @@ if [[ -f "$BUZZ_ROOT/bin/activate-hermit" ]]; then
   . "$BUZZ_ROOT/bin/activate-hermit"
 fi
 
-docker compose -f "$COMPOSE_FILE" build openkey-sdk-vendor
-docker compose -f "$COMPOSE_FILE" run --rm openkey-sdk-vendor
+# A clean checkout is a supported entry point. Do not require a contributor to
+# infer or pre-create host dependencies before running the public browser flow.
+pnpm install --frozen-lockfile
+(
+  cd "$OPENKEY_REPO_PATH"
+  bun install --frozen-lockfile
+)
 
 pnpm -C web typecheck
 pnpm -C web test
@@ -65,11 +123,12 @@ pnpm -C web test
     tests/nostr-origin.test.ts
 )
 
-if [[ "${BUZZ_HARNESS_COMPOSE_BUILD:-1}" == "1" ]]; then
-  docker compose -f "$COMPOSE_FILE" up -d --build --force-recreate
-else
-  docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-build
-fi
+# Build every service from registry sources with no reusable BuildKit layer,
+# then start the newly built images. The happy-path result therefore cannot be
+# supplied by an earlier image, cache, volume, or ignored generated output.
+compose_started=1
+"${compose[@]}" build --pull --no-cache
+"${compose[@]}" up -d --force-recreate --no-build
 
 wait_for_compose_health "buzz"
 wait_for_compose_health "openkey-api"
