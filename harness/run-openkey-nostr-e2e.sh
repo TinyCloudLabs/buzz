@@ -34,17 +34,36 @@ if ! git -C "$OPENKEY_REPO_PATH" diff --quiet || ! git -C "$OPENKEY_REPO_PATH" d
   exit 1
 fi
 
-# Each run receives fresh Compose volumes. This prevents a previous database,
-# image, or generated artifact from becoming an unstated test prerequisite.
+# Each run receives fresh Compose volumes and image tags. This prevents a
+# previous database, image, or generated artifact from becoming an unstated
+# test prerequisite, and makes cleanup safe to scope to this invocation.
 COMPOSE_PROJECT_NAME="${BUZZ_OPENKEY_COMPOSE_PROJECT:-buzz-openkey-e2e-$$}"
+BUZZ_OPENKEY_IMAGE_PREFIX="${BUZZ_OPENKEY_IMAGE_PREFIX:-$COMPOSE_PROJECT_NAME}"
 compose=(docker compose --project-name "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE")
 
 export OPENKEY_REPO_PATH
+export BUZZ_OPENKEY_IMAGE_PREFIX
 export BUZZ_WEB_URL="${BUZZ_WEB_URL:-http://localhost:3000}"
 export OPENKEY_API_URL="${OPENKEY_API_URL:-http://localhost:3001}"
 export OPENKEY_URL="${OPENKEY_URL:-http://localhost:5173}"
 export RELAY_WS_URL="${RELAY_WS_URL:-ws://localhost:3000}"
 export BUZZ_E2E_DOCKER=1
+
+compose_started=0
+cleanup() {
+  local result=$?
+  if [[ "$compose_started" == 1 ]]; then
+    # Evidence lives in the checkout, not in Compose state. Removing only this
+    # invocation's project, volumes, and uniquely tagged images keeps repeated
+    # clean runs from accumulating Docker Desktop storage.
+    "${compose[@]}" down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+    docker image rm \
+      "$BUZZ_OPENKEY_IMAGE_PREFIX/buzz:local" \
+      "$BUZZ_OPENKEY_IMAGE_PREFIX/openkey-api:local" >/dev/null 2>&1 || true
+  fi
+  exit "$result"
+}
+trap cleanup EXIT
 
 wait_for_http() {
   local url="$1"
@@ -108,6 +127,7 @@ pnpm -C web test
 # then start the newly built images. The happy-path result therefore cannot be
 # supplied by an earlier image, cache, volume, or ignored generated output.
 "${compose[@]}" build --pull --no-cache
+compose_started=1
 "${compose[@]}" up -d --force-recreate --no-build
 
 wait_for_compose_health "buzz"

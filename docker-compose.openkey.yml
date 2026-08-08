@@ -108,7 +108,7 @@ services:
     # No `build:` here on purpose: this reuses the already-built `buzz`
     # image by tag (built by the `buzz` service below) rather than
     # triggering a second, independent build of the same Dockerfile.
-    image: buzz-openkey/buzz:local
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/buzz:local
     # The image's ENTRYPOINT is hardcoded to /usr/local/bin/buzz-relay, so a
     # bare `command:` override just becomes extra args to buzz-relay, not a
     # different binary. Override `entrypoint:` to actually invoke buzz-admin.
@@ -139,10 +139,10 @@ services:
         # Must be the host-reachable OpenKey web origin, not the in-network
         # service name: the browser (not this container) loads the iframe.
         VITE_OPENKEY_HOST: ${VITE_OPENKEY_HOST:-http://localhost:5173}
-    # Durable, explicit local tag (rather than the ephemeral project-scoped
-    # name Compose would otherwise assign) so downstream stages/harnesses can
-    # reference this image by a stable name across rebuilds.
-    image: buzz-openkey/buzz:local
+    # The harness supplies a unique prefix so one invocation cannot reuse or
+    # overwrite another's images. A manual Compose run keeps the documented
+    # buzz-openkey default prefix.
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/buzz:local
     ports:
       - "3000:3000"
     environment:
@@ -204,7 +204,7 @@ services:
   # Prisma, the schema, and root package scripts; using it avoids a second
   # concurrent BuildKit build of the same OpenKey dependency graph.
   openkey-migrate:
-    image: buzz-openkey/openkey-api:local
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/openkey-api:local
     command: ["bun", "run", "db:migrate:apply"]
     volumes:
       # Keep Prisma's datasource config available to the migration-only runtime.
@@ -225,7 +225,7 @@ services:
   # OPENKEY_REPO_PATH above)
   # ---------------------------------------------------------------------------
   openkey-api:
-    image: buzz-openkey/openkey-api:local
+    image: ${BUZZ_OPENKEY_IMAGE_PREFIX:-buzz-openkey}/openkey-api:local
     build:
       context: *openkey-context
       dockerfile: Dockerfile

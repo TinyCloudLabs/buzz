@@ -44,7 +44,7 @@ What it does:
 - Runs focused Buzz web typecheck/unit coverage and focused OpenKey Nostr
   route/origin/TEE tests.
 - Builds Compose images with `--pull --no-cache` and starts a uniquely named
-  Compose project with fresh volumes. It does not use a previous image,
+  Compose project, volumes, and image tags. It does not use a previous image,
   BuildKit cache, Docker volume, or ignored generated SDK output.
 - Requires Buzz readiness, OpenKey API health, and OpenKey web availability.
 - Runs `web/tests/e2e/openkey-nostr.spec.ts` with `BUZZ_E2E_DOCKER=1`.
@@ -55,6 +55,15 @@ Evidence is written under `harness/evidence/`:
 - raw relay WebSocket frames observed by Playwright
 - Nostr-flow `postMessage` records used for secret and target-origin checks
 
-The stack is intentionally left running for inspection after the harness exits.
-Set `BUZZ_OPENKEY_COMPOSE_PROJECT` only when an explicit, stable Compose
-project name is needed for inspection; use a new name for another clean run.
+The harness tears down its own Compose project, volumes, and uniquely tagged
+images on exit; the evidence files remain under `harness/evidence/`. This keeps
+repeated clean runs from exhausting Docker Desktop storage. To retain a stack
+for manual inspection, run Compose directly with an explicit project name and
+tear it down afterwards:
+
+```bash
+OPENKEY_REPO_PATH=../openkey docker compose --project-name buzz-openkey-inspect \
+  -f docker-compose.openkey.yml up --build -d
+OPENKEY_REPO_PATH=../openkey docker compose --project-name buzz-openkey-inspect \
+  -f docker-compose.openkey.yml down --volumes --remove-orphans
+```
