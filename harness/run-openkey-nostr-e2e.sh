@@ -63,7 +63,7 @@ wait_for_compose_health() {
   local service="$1"
   for _ in $(seq 1 90); do
     local container_id
-    container_id="$(docker compose -f "$COMPOSE_FILE" ps -q "$service")"
+    container_id="$("${compose[@]}" ps -q "$service")"
     if [[ -n "$container_id" ]]; then
       local status
       status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id")"
