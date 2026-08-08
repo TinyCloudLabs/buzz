@@ -2,8 +2,42 @@
 set -euo pipefail
 
 BUZZ_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OPENKEY_REPO_PATH="${OPENKEY_REPO_PATH:-/Users/samgbafa/conductor/workspaces/tinycloud-dev/perth/worktrees/openkey/feat/openkey-nostr-signing}"
 COMPOSE_FILE="${COMPOSE_FILE:-$BUZZ_ROOT/docker-compose.openkey.yml}"
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+for command in docker bun pnpm git; do
+  require_command "$command"
+done
+
+if [[ -z "${OPENKEY_REPO_PATH:-}" ]]; then
+  cat >&2 <<'EOF'
+OPENKEY_REPO_PATH is required and must name a clean local OpenKey checkout.
+Example: OPENKEY_REPO_PATH=../openkey ./harness/run-openkey-nostr-e2e.sh
+EOF
+  exit 1
+fi
+
+if [[ ! -f "$OPENKEY_REPO_PATH/package.json" ]] || ! git -C "$OPENKEY_REPO_PATH" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "OPENKEY_REPO_PATH is not an OpenKey checkout: $OPENKEY_REPO_PATH" >&2
+  exit 1
+fi
+
+OPENKEY_REPO_PATH="$(cd "$OPENKEY_REPO_PATH" && pwd -P)"
+if ! git -C "$OPENKEY_REPO_PATH" diff --quiet || ! git -C "$OPENKEY_REPO_PATH" diff --cached --quiet; then
+  echo "OPENKEY_REPO_PATH must be clean; commit or stash its tracked changes first." >&2
+  exit 1
+fi
+
+# Each run receives fresh Compose volumes. This prevents a previous database,
+# image, or generated artifact from becoming an unstated test prerequisite.
+COMPOSE_PROJECT_NAME="${BUZZ_OPENKEY_COMPOSE_PROJECT:-buzz-openkey-e2e-$$}"
+compose=(docker compose --project-name "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE")
 
 export OPENKEY_REPO_PATH
 export BUZZ_WEB_URL="${BUZZ_WEB_URL:-http://localhost:3000}"
@@ -50,8 +84,13 @@ if [[ -f "$BUZZ_ROOT/bin/activate-hermit" ]]; then
   . "$BUZZ_ROOT/bin/activate-hermit"
 fi
 
-docker compose -f "$COMPOSE_FILE" build openkey-sdk-vendor
-docker compose -f "$COMPOSE_FILE" run --rm openkey-sdk-vendor
+# A clean checkout is a supported entry point. Do not require a contributor to
+# infer or pre-create host dependencies before running the public browser flow.
+pnpm install --frozen-lockfile
+(
+  cd "$OPENKEY_REPO_PATH"
+  bun install --frozen-lockfile
+)
 
 pnpm -C web typecheck
 pnpm -C web test
@@ -65,11 +104,11 @@ pnpm -C web test
     tests/nostr-origin.test.ts
 )
 
-if [[ "${BUZZ_HARNESS_COMPOSE_BUILD:-1}" == "1" ]]; then
-  docker compose -f "$COMPOSE_FILE" up -d --build --force-recreate
-else
-  docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-build
-fi
+# Build every service from registry sources with no reusable BuildKit layer,
+# then start the newly built images. The happy-path result therefore cannot be
+# supplied by an earlier image, cache, volume, or ignored generated output.
+"${compose[@]}" build --pull --no-cache
+"${compose[@]}" up -d --force-recreate --no-build
 
 wait_for_compose_health "buzz"
 wait_for_compose_health "openkey-api"
